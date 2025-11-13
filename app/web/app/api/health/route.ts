@@ -1,11 +1,11 @@
-import { NextResponse } from "next/server";
-import { apiSuccess } from "@/lib/api-response";
+import { ok } from '@/lib/api/response';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  return NextResponse.json(
-    apiSuccess({
-      status: "ok",
-      timestamp: new Date().toISOString(),
-    })
-  );
+  return ok({
+    status: 'ok',
+    service: 'archimedes-web',
+    timestamp: new Date().toISOString(),
+  });
 }
