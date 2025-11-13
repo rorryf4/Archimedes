@@ -1,4 +1,4 @@
 ﻿Write-Host 'Verifying Archimedes web…'
-pnpm -C app/web lint
-pnpm -C app/web type-check
+pnpm install
+pnpm verify
 Write-Host 'OK'
