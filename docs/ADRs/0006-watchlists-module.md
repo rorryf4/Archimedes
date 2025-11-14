@@ -180,6 +180,97 @@ Following ADR-0005 testing strategy:
 
 All tests use Vitest with beforeEach hooks to reset store state, ensuring test isolation.
 
+**Milestone 14**: 15+ unit tests for enrichment layer
+- `tests/watchlists/enrichment.test.ts`:
+  - Enriching watchlists with token items (symbol, name, price, change, volume)
+  - Enriching watchlists with market items (pair symbols, price data)
+  - Handling mixed token/market items
+  - Graceful handling of non-existent token/market IDs
+  - Handling items with neither tokenId nor marketId
+  - Price caching functionality and cache clearing
+  - Batch enrichment of multiple watchlists
+
+## Enrichment Layer (Milestone 14)
+
+### Overview
+
+The enrichment layer transforms raw watchlist data from the repository into display-ready view models with market data, prices, and metadata. This layer sits between the repository and the API routes, providing a clean separation between data storage and presentation logic.
+
+### Architecture
+
+**Location**: `app/web/modules/watchlists/enrichment.ts`
+
+**Flow**:
+1. Repository returns raw `Watchlist` objects with only IDs
+2. Enrichment layer resolves IDs to full entities using markets module
+3. Adds price data, 24h changes, and volume from markets module
+4. Returns `WatchlistEnriched` objects ready for UI consumption
+
+### Enriched Types
+
+**WatchlistItemEnriched**:
+- `kind`: Discriminator ('token' | 'market')
+- `symbol`: Display symbol (e.g., "BTC" or "BTC/USDT")
+- `name`: Human-readable name
+- `price`: Current price (USD)
+- `priceChange24h`: 24h percentage change (mocked for now)
+- `volume24h`: 24h trading volume (mocked for now)
+- `baseSymbol` / `quoteSymbol`: For markets only
+
+**WatchlistEnriched**:
+- Same metadata as `Watchlist` (id, name, description, timestamps)
+- `items`: Array of `WatchlistItemEnriched` instead of raw `WatchlistItem`
+
+### Data Sources
+
+Enrichment uses existing infrastructure:
+- **Token metadata**: `listTokens()` from markets module
+- **Market metadata**: `getMarketById()` from markets module
+- **Price data**: `getLatestPriceFeedForMarket()` from markets module
+- **24h change**: Mock calculation (production would use price history service)
+- **24h volume**: Mock calculation (production would use volume tracking service)
+
+### Caching Strategy
+
+To avoid redundant price lookups, the enrichment layer implements in-memory caching:
+- **Cache Key**: Market ID
+- **Cache TTL**: 60 seconds
+- **Implementation**: Simple `Map<string, CacheEntry<number>>`
+- **Invalidation**: Time-based expiration + manual `clearPriceCache()` for testing
+
+This reduces repeated calls to `getLatestPriceFeedForMarket()` when enriching multiple watchlists or re-fetching the same watchlist within the TTL window.
+
+### API Integration
+
+API routes now use enrichment instead of raw service layer:
+- **GET /api/watchlists**: `enrichWatchlists(await repository.listWatchlists())`
+- **GET /api/watchlists/[id]**: `enrichWatchlist(await repository.getWatchlistById(id))`
+
+POST/PATCH/DELETE operations still return raw watchlists from repository (no enrichment needed for write operations).
+
+### UI Integration
+
+**Watchlists listing page** (`/watchlists`):
+- Shows preview of top 3 items per watchlist
+- Displays symbol, name, price, and 24h change for each preview item
+- Color-coded price changes (green for positive, red for negative)
+
+**Watchlist detail page** (`/watchlists/[id]`):
+- Full card per item with large price display
+- Shows kind (token/market), symbol, name
+- Displays current price, 24h change percentage, and 24h volume
+- Clickable links to token/market detail pages
+
+### Design Decisions
+
+**Separation of concerns**: Enrichment is a pure function layer, not mixed into repository or components. This keeps data storage logic separate from presentation logic.
+
+**Synchronous enrichment**: Currently synchronous since all data sources are in-memory. When price data becomes async (e.g., external API), enrichment functions can easily become async.
+
+**Mock data for metrics**: 24h change and volume are currently mocked with stable hash-based values. This provides realistic UI without implementing full price history tracking. Production would replace these with real time-series data.
+
+**No enrichment on writes**: POST/PATCH/DELETE return raw watchlists to avoid unnecessary enrichment overhead. Clients can re-fetch with GET to get enriched data.
+
 ## Alternatives Considered
 
 ### Combined Token/Market Field

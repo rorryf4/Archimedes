@@ -6,7 +6,8 @@
       "Bash(pnpm install:*)",
       "Bash(pnpm lint:web:*)",
       "Bash(pnpm typecheck:web:*)",
-      "Bash(pnpm dev:web:*)"
+      "Bash(pnpm dev:web:*)",
+      "Bash(pnpm verify:*)"
     ],
     "deny": [],
     "ask": []

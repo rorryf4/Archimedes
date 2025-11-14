@@ -1,12 +1,13 @@
 import { ok, error } from '@/lib/api/response';
-import { listWatchlistsWithRelations } from '@/modules/watchlists';
+import { enrichWatchlists } from '@/modules/watchlists';
 import * as repository from '@/modules/watchlists/repository';
 import { CreateWatchlistInputSchema } from '@/modules/watchlists/validation';
 
 export const dynamic = 'force-dynamic';
 
-export function GET() {
-  const watchlists = listWatchlistsWithRelations();
+export async function GET() {
+  const rawWatchlists = await repository.listWatchlists();
+  const watchlists = enrichWatchlists(rawWatchlists);
 
   return ok({
     watchlists,

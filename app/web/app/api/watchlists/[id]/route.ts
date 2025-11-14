@@ -1,5 +1,5 @@
 import { ok, error } from '@/lib/api/response';
-import { getWatchlistWithRelationsById } from '@/modules/watchlists';
+import { enrichWatchlist } from '@/modules/watchlists';
 import * as repository from '@/modules/watchlists/repository';
 import { PatchWatchlistInputSchema } from '@/modules/watchlists/validation';
 
@@ -13,11 +13,13 @@ interface Params {
 
 export async function GET(_request: Request, { params }: Params) {
   const { id } = await params;
-  const watchlist = getWatchlistWithRelationsById(id);
+  const rawWatchlist = await repository.getWatchlistById(id);
 
-  if (!watchlist) {
+  if (!rawWatchlist) {
     return error('Watchlist not found', 404);
   }
+
+  const watchlist = enrichWatchlist(rawWatchlist);
 
   return ok({
     watchlist,
