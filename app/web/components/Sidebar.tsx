@@ -1,3 +1,5 @@
+import Link from 'next/link';
+
 export default function Sidebar() {
   const navItems = ["Dashboard", "Signals", "Settings"];
 
@@ -10,6 +12,22 @@ export default function Sidebar() {
         Navigation
       </div>
       <ul className="space-y-1">
+        <li>
+          <Link
+            href="/markets"
+            className="block w-full text-left text-sm px-3 py-2 rounded-md hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-600 focus:ring-offset-2 focus:ring-offset-slate-950"
+          >
+            Markets
+          </Link>
+        </li>
+        <li>
+          <Link
+            href="/tokens"
+            className="block w-full text-left text-sm px-3 py-2 rounded-md hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-600 focus:ring-offset-2 focus:ring-offset-slate-950"
+          >
+            Tokens
+          </Link>
+        </li>
         {navItems.map((item) => (
           <li key={item}>
             <button

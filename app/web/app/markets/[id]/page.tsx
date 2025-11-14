@@ -160,7 +160,12 @@ export default async function MarketDetailPage({ params }: PageProps) {
               <div className="space-y-1">
                 <div className="text-sm">
                   <span className="text-slate-400">Symbol:</span>{' '}
-                  {market.baseToken.symbol}
+                  <Link
+                    href={`/tokens/${market.baseToken.id}`}
+                    className="text-blue-400 hover:text-blue-300 hover:underline"
+                  >
+                    {market.baseToken.symbol}
+                  </Link>
                 </div>
                 <div className="text-sm">
                   <span className="text-slate-400">Name:</span>{' '}
@@ -180,7 +185,12 @@ export default async function MarketDetailPage({ params }: PageProps) {
               <div className="space-y-1">
                 <div className="text-sm">
                   <span className="text-slate-400">Symbol:</span>{' '}
-                  {market.quoteToken.symbol}
+                  <Link
+                    href={`/tokens/${market.quoteToken.id}`}
+                    className="text-blue-400 hover:text-blue-300 hover:underline"
+                  >
+                    {market.quoteToken.symbol}
+                  </Link>
                 </div>
                 <div className="text-sm">
                   <span className="text-slate-400">Name:</span>{' '}
