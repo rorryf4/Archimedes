@@ -1,7 +1,10 @@
 'use client';
 
-import Link from 'next/link';
 import { useState, useEffect } from 'react';
+import { WatchlistCard } from '@/components/watchlists/WatchlistCard';
+import { WatchlistCardSkeleton } from '@/components/watchlists/SkeletonLoader';
+import { ErrorState } from '@/components/watchlists/ErrorState';
+import { EmptyState } from '@/components/watchlists/EmptyState';
 
 interface WatchlistItemEnriched {
   id: string;
@@ -108,59 +111,58 @@ export default function WatchlistsPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold">Watchlists</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Browse your cryptocurrency watchlists
-          </p>
-        </div>
-        <div className="text-center py-12 text-slate-400">Loading...</div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold">Watchlists</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Browse your cryptocurrency watchlists
-          </p>
-        </div>
-        <div className="bg-red-900/20 border border-red-800 rounded-lg p-4 text-red-400">
-          {error}
-        </div>
-        <button
-          onClick={fetchWatchlists}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Watchlists</h1>
           <p className="text-sm text-slate-400 mt-1">
             Browse your cryptocurrency watchlists
           </p>
         </div>
-        <button
-          onClick={() => setShowCreateForm(!showCreateForm)}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-        >
-          {showCreateForm ? 'Cancel' : 'Create Watchlist'}
-        </button>
+        <div className="flex gap-2">
+          {!loading && (
+            <button
+              onClick={fetchWatchlists}
+              disabled={loading}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              aria-label="Refresh watchlists"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              Refresh
+            </button>
+          )}
+          <button
+            onClick={() => setShowCreateForm(!showCreateForm)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+          >
+            {showCreateForm ? 'Cancel' : 'Create Watchlist'}
+          </button>
+        </div>
       </div>
 
+      {/* Error state */}
+      {error && !loading && (
+        <ErrorState
+          message={error}
+          onRetry={fetchWatchlists}
+        />
+      )}
+
+      {/* Create form */}
       {showCreateForm && (
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-6">
           <h2 className="text-lg font-medium mb-4">Create New Watchlist</h2>
@@ -202,7 +204,7 @@ export default function WatchlistsPage() {
               <button
                 type="submit"
                 disabled={creating || !formData.name.trim()}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors"
               >
                 {creating ? 'Creating...' : 'Create'}
               </button>
@@ -213,7 +215,7 @@ export default function WatchlistsPage() {
                   setFormData({ name: '', description: '' });
                 }}
                 disabled={creating}
-                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:cursor-not-allowed text-slate-100 text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-slate-500"
+                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:cursor-not-allowed text-slate-100 text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-slate-500 transition-colors"
               >
                 Cancel
               </button>
@@ -222,129 +224,34 @@ export default function WatchlistsPage() {
         </div>
       )}
 
-      {watchlists.length > 0 ? (
+      {/* Loading state */}
+      {loading && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {watchlists.map((watchlist) => {
-            const tokenCount = watchlist.items.filter(
-              (item) => item.kind === 'token'
-            ).length;
-            const marketCount = watchlist.items.filter(
-              (item) => item.kind === 'market'
-            ).length;
-
-            return (
-              <Link
-                key={watchlist.id}
-                href={`/watchlists/${watchlist.id}`}
-                className="block bg-slate-900 border border-slate-800 rounded-lg p-6 hover:bg-slate-800 transition-colors"
-              >
-                <div className="space-y-3">
-                  <div>
-                    <h2 className="text-lg font-medium text-blue-400">
-                      {watchlist.name}
-                    </h2>
-                    {watchlist.description && (
-                      <p className="text-sm text-slate-400 mt-1">
-                        {watchlist.description}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-4 text-sm text-slate-400">
-                    <div>
-                      <span className="font-medium text-slate-300">
-                        {watchlist.items.length}
-                      </span>{' '}
-                      {watchlist.items.length === 1 ? 'item' : 'items'}
-                    </div>
-
-                    {tokenCount > 0 && (
-                      <div>
-                        <span className="font-medium text-slate-300">
-                          {tokenCount}
-                        </span>{' '}
-                        {tokenCount === 1 ? 'token' : 'tokens'}
-                      </div>
-                    )}
-
-                    {marketCount > 0 && (
-                      <div>
-                        <span className="font-medium text-slate-300">
-                          {marketCount}
-                        </span>{' '}
-                        {marketCount === 1 ? 'market' : 'markets'}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Preview of top items with prices */}
-                  {watchlist.items.length > 0 && (
-                    <div className="border-t border-slate-800 pt-3 space-y-2">
-                      {watchlist.items.slice(0, 3).map((item) => (
-                        <div
-                          key={item.id}
-                          className="flex items-center justify-between text-sm"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-slate-300">
-                              {item.symbol}
-                            </span>
-                            <span className="text-slate-500 text-xs">
-                              {item.name}
-                            </span>
-                          </div>
-                          {item.price !== undefined && (
-                            <div className="flex items-center gap-2">
-                              <span className="text-slate-300">
-                                ${item.price.toLocaleString(undefined, {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })}
-                              </span>
-                              {item.priceChange24h !== undefined && (
-                                <span
-                                  className={`text-xs ${
-                                    item.priceChange24h >= 0
-                                      ? 'text-green-400'
-                                      : 'text-red-400'
-                                  }`}
-                                >
-                                  {item.priceChange24h >= 0 ? '+' : ''}
-                                  {item.priceChange24h.toFixed(2)}%
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                      {watchlist.items.length > 3 && (
-                        <div className="text-xs text-slate-500 text-center pt-1">
-                          +{watchlist.items.length - 3} more
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="text-xs text-slate-500">
-                    Created {new Date(watchlist.createdAt).toLocaleDateString()}
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
+          <WatchlistCardSkeleton />
+          <WatchlistCardSkeleton />
+          <WatchlistCardSkeleton />
+          <WatchlistCardSkeleton />
         </div>
-      ) : (
-        <div className="text-center py-12 text-slate-400">
-          <p className="mb-4">No watchlists yet</p>
-          {!showCreateForm && (
-            <button
-              onClick={() => setShowCreateForm(true)}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-md"
-            >
-              Create Your First Watchlist
-            </button>
-          )}
+      )}
+
+      {/* Watchlists grid */}
+      {!loading && !error && watchlists.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {watchlists.map((watchlist) => (
+            <WatchlistCard key={watchlist.id} watchlist={watchlist} />
+          ))}
         </div>
+      )}
+
+      {/* Empty state */}
+      {!loading && !error && watchlists.length === 0 && (
+        <EmptyState
+          title="No watchlists yet"
+          description="Create your first watchlist to start tracking tokens and markets."
+          actionLabel="Create Your First Watchlist"
+          onAction={() => setShowCreateForm(true)}
+          icon="watchlist"
+        />
       )}
     </div>
   );
