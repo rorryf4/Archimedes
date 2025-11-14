@@ -28,6 +28,14 @@ export default function Sidebar() {
             Tokens
           </Link>
         </li>
+        <li>
+          <Link
+            href="/watchlists"
+            className="block w-full text-left text-sm px-3 py-2 rounded-md hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-600 focus:ring-offset-2 focus:ring-offset-slate-950"
+          >
+            Watchlists
+          </Link>
+        </li>
         {navItems.map((item) => (
           <li key={item}>
             <button
