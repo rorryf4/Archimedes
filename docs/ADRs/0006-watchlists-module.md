@@ -1,7 +1,7 @@
 # ADR-0006: Watchlists Module and API Design
 
 **Status:** Accepted
-**Date:** 2025-01-14 (Updated: 2025-01-15)
+**Date:** 2025-01-14 (Updated: 2025-01-15, 2025-01-16)
 **Deciders:** Engineering Team
 **Related:** ADR-0004 (Markets Module), ADR-0005 (Domain Testing Strategy)
 
@@ -270,6 +270,162 @@ POST/PATCH/DELETE operations still return raw watchlists from repository (no enr
 **Mock data for metrics**: 24h change and volume are currently mocked with stable hash-based values. This provides realistic UI without implementing full price history tracking. Production would replace these with real time-series data.
 
 **No enrichment on writes**: POST/PATCH/DELETE return raw watchlists to avoid unnecessary enrichment overhead. Clients can re-fetch with GET to get enriched data.
+
+## Persistence Layer (Milestone 16)
+
+### Overview
+
+The persistence layer was extended to support dual implementations: in-memory (for development and testing) and Supabase (for production). This provides a path to real database persistence while maintaining the existing in-memory development workflow.
+
+### Architecture
+
+**Repository Pattern with Dual Implementation**:
+
+1. **`repository.memory.ts`**: Original in-memory implementation
+   - Mutable in-memory store with array of watchlists
+   - ID generation using timestamp + random string
+   - Synchronous operations wrapped in async functions
+   - `resetStore()` utility for test isolation
+
+2. **`repository.supabase.ts`**: New Supabase implementation
+   - Uses `@supabase/supabase-js` client library
+   - Queries PostgreSQL via Supabase REST API
+   - Full async operations with error handling
+   - Row-to-domain object mapping functions
+
+3. **`repository.ts`**: Switcher module
+   - Reads `USE_SUPABASE_PERSISTENCE` environment variable
+   - Dynamically requires appropriate implementation at module load
+   - Delegates all function calls to selected implementation
+   - Maintains consistent API surface regardless of backend
+
+### Database Schema
+
+**Supabase tables** (defined in `schema.sql`):
+
+```sql
+-- watchlists table
+CREATE TABLE watchlists (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  description TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- watchlist_items table
+CREATE TABLE watchlist_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  watchlist_id UUID NOT NULL REFERENCES watchlists(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('token', 'market')),
+  token_id TEXT,
+  market_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- Constraint: exactly one of token_id or market_id must be set
+  CONSTRAINT check_token_or_market CHECK (
+    (kind = 'token' AND token_id IS NOT NULL AND market_id IS NULL) OR
+    (kind = 'market' AND market_id IS NOT NULL AND token_id IS NULL)
+  )
+);
+```
+
+**Features**:
+- UUID primary keys (Supabase default)
+- Foreign key with `ON DELETE CASCADE` for automatic cleanup
+- Check constraints for data integrity
+- Indexes on `watchlist_id`, `token_id`, and `market_id` for query performance
+- Automatic `updated_at` trigger on watchlists table
+
+### Configuration
+
+**Environment variables** (`.env.local.example`):
+
+```bash
+# Persistence backend selection
+USE_SUPABASE_PERSISTENCE=false  # true for Supabase, false for in-memory
+
+# Supabase credentials (only required if USE_SUPABASE_PERSISTENCE=true)
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+```
+
+**Defaults**:
+- By default (no env vars), uses in-memory persistence
+- Tests always use in-memory via direct import of `repository.memory.ts`
+- API routes use switcher and respect environment configuration
+
+### Testing Strategy
+
+**Test isolation**: All tests import `repository.memory.ts` directly instead of `repository.ts` switcher. This ensures:
+- Tests never require Supabase connection
+- Tests run fast with in-memory operations
+- CI/CD doesn't need Supabase credentials
+- Test behavior is consistent regardless of environment
+
+**Modified files**:
+- `tests/watchlists/repository.test.ts`: Changed import to `@/modules/watchlists/repository.memory`
+
+### Implementation Details
+
+**Row mapping**: Supabase implementation includes helper functions to map database rows to domain objects:
+- `mapWatchlistRow()`: Converts PostgreSQL row + items to `Watchlist` domain object
+- `mapWatchlistItemRow()`: Converts item row to `WatchlistItem` with proper discriminated union
+
+**Error handling**: Supabase implementation includes specific error code handling:
+- `PGRST116`: Row not found (returns `null` instead of throwing)
+- Other errors: Wrapped in descriptive error messages for debugging
+
+**Optimizations**:
+- `listWatchlists()` fetches all items in single query using `IN` clause
+- Groups items by `watchlist_id` to avoid N+1 query problem
+- Uses database indexes for efficient filtering
+
+**Duplicate detection**: Both implementations check for duplicate token/market additions before inserting. Supabase relies on application-level check rather than unique constraint (allows same token in multiple watchlists).
+
+### Migration Path
+
+For teams deploying to production:
+
+1. **Set up Supabase project**: Create new project at supabase.com
+2. **Run schema**: Execute `schema.sql` in Supabase SQL editor
+3. **Copy credentials**: Get project URL and anon key from settings
+4. **Configure environment**: Set `USE_SUPABASE_PERSISTENCE=true` and add credentials
+5. **Optional: Seed data**: Migrate existing watchlists from memory to Supabase
+
+**Data migration** (future consideration): Could add a CLI script to export memory store data and import to Supabase for seamless transition.
+
+### Design Decisions
+
+**Feature flag over build-time config**: Using runtime environment variable allows same deployment to switch persistence without rebuild.
+
+**Dual implementation maintained**: Keeping in-memory version ensures fast local development without external dependencies.
+
+**No ORM**: Direct Supabase client usage avoids extra abstraction layer. For future complexity, could introduce Prisma.
+
+**Application-level logic**: Duplicate detection and validation stay in application code rather than database constraints. Provides flexibility and consistent behavior across both implementations.
+
+**Lazy module loading**: Using `require()` instead of `import` allows dynamic selection at module initialization.
+
+### Limitations
+
+**No data migration**: Switching from memory to Supabase loses existing data (no auto-migration).
+
+**No transaction support**: Current implementation doesn't use Supabase transactions for multi-step operations.
+
+**No connection pooling**: Uses default Supabase client connection management.
+
+**No caching**: Every read hits database (no application-level cache beyond enrichment price cache).
+
+### Future Considerations
+
+- **Prisma ORM**: For better type safety and migration management
+- **Connection pooling**: For high-traffic production deployments
+- **Read replicas**: For scaling read-heavy workloads
+- **Optimistic locking**: Add version column to prevent concurrent update conflicts
+- **Soft deletes**: Add `deleted_at` column instead of hard deletes
+- **Audit logging**: Track all CRUD operations for debugging and compliance
+- **Data migration tooling**: CLI script to migrate from memory to Supabase
 
 ## Alternatives Considered
 

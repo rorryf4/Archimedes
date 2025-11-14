@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import * as repository from '@/modules/watchlists/repository';
+import * as repository from '@/modules/watchlists/repository.memory';
 
 describe('watchlists repository', () => {
   beforeEach(() => {
