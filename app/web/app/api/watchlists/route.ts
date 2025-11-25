@@ -1,12 +1,13 @@
 import { ok, error } from '@/lib/api/response';
-import { enrichWatchlists } from '@/modules/watchlists';
+import { enrichWatchlist, enrichWatchlists, getCurrentUserContext } from '@/modules/watchlists';
 import * as repository from '@/modules/watchlists/repository';
 import { CreateWatchlistInputSchema } from '@/modules/watchlists/validation';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  const rawWatchlists = await repository.listWatchlists();
+  const context = getCurrentUserContext();
+  const rawWatchlists = await repository.listWatchlists(context);
   const watchlists = enrichWatchlists(rawWatchlists);
 
   return ok({
@@ -16,6 +17,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const context = getCurrentUserContext();
     const body = await request.json();
 
     const validation = CreateWatchlistInputSchema.safeParse(body);
@@ -26,7 +28,8 @@ export async function POST(request: Request) {
       });
     }
 
-    const watchlist = await repository.createWatchlist(validation.data);
+    const rawWatchlist = await repository.createWatchlist(context, validation.data);
+    const watchlist = enrichWatchlist(rawWatchlist);
 
     return ok({ watchlist }, { status: 201 });
   } catch (err) {

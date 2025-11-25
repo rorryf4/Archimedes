@@ -2,7 +2,7 @@
 // In-memory repository implementation for watchlists (used by tests and when Supabase is disabled)
 
 import { WATCHLISTS } from './data';
-import type { Watchlist, WatchlistItem } from './types';
+import type { Watchlist, WatchlistItem, WatchlistUserContext } from './types';
 import type {
   CreateWatchlistInput,
   UpdateWatchlistInput,
@@ -28,30 +28,39 @@ function now(): string {
 }
 
 /**
- * List all watchlists (no auth for now)
+ * List all watchlists for a specific user
  */
-export async function listWatchlists(): Promise<Watchlist[]> {
-  return [...watchlistsStore];
+export async function listWatchlists(
+  context: WatchlistUserContext
+): Promise<Watchlist[]> {
+  return watchlistsStore
+    .filter((wl) => wl.ownerUserId === context.userId)
+    .map((wl) => ({ ...wl }));
 }
 
 /**
- * Get a single watchlist by ID
+ * Get a single watchlist by ID (user-scoped)
  */
 export async function getWatchlistById(
+  context: WatchlistUserContext,
   id: string
 ): Promise<Watchlist | null> {
-  const watchlist = watchlistsStore.find((wl) => wl.id === id);
+  const watchlist = watchlistsStore.find(
+    (wl) => wl.id === id && wl.ownerUserId === context.userId
+  );
   return watchlist ? { ...watchlist } : null;
 }
 
 /**
- * Create a new watchlist
+ * Create a new watchlist for the current user
  */
 export async function createWatchlist(
+  context: WatchlistUserContext,
   input: CreateWatchlistInput
 ): Promise<Watchlist> {
   const newWatchlist: Watchlist = {
     id: generateId('wl'),
+    ownerUserId: context.userId,
     name: input.name,
     description: input.description,
     items: [],
@@ -65,13 +74,16 @@ export async function createWatchlist(
 }
 
 /**
- * Update watchlist metadata (name, description)
+ * Update watchlist metadata (name, description) - user-scoped
  */
 export async function updateWatchlist(
+  context: WatchlistUserContext,
   id: string,
   input: UpdateWatchlistInput
 ): Promise<Watchlist | null> {
-  const index = watchlistsStore.findIndex((wl) => wl.id === id);
+  const index = watchlistsStore.findIndex(
+    (wl) => wl.id === id && wl.ownerUserId === context.userId
+  );
 
   if (index === -1) {
     return null;
@@ -90,13 +102,16 @@ export async function updateWatchlist(
 }
 
 /**
- * Add a token to watchlist
+ * Add a token to watchlist (user-scoped)
  */
 export async function addTokenToWatchlist(
+  context: WatchlistUserContext,
   id: string,
   tokenId: string
 ): Promise<Watchlist | null> {
-  const index = watchlistsStore.findIndex((wl) => wl.id === id);
+  const index = watchlistsStore.findIndex(
+    (wl) => wl.id === id && wl.ownerUserId === context.userId
+  );
 
   if (index === -1) {
     return null;
@@ -127,13 +142,16 @@ export async function addTokenToWatchlist(
 }
 
 /**
- * Add a market to watchlist
+ * Add a market to watchlist (user-scoped)
  */
 export async function addMarketToWatchlist(
+  context: WatchlistUserContext,
   id: string,
   marketId: string
 ): Promise<Watchlist | null> {
-  const index = watchlistsStore.findIndex((wl) => wl.id === id);
+  const index = watchlistsStore.findIndex(
+    (wl) => wl.id === id && wl.ownerUserId === context.userId
+  );
 
   if (index === -1) {
     return null;
@@ -164,13 +182,16 @@ export async function addMarketToWatchlist(
 }
 
 /**
- * Remove an item from watchlist
+ * Remove an item from watchlist (user-scoped)
  */
 export async function removeItemFromWatchlist(
+  context: WatchlistUserContext,
   id: string,
   itemId: string
 ): Promise<Watchlist | null> {
-  const index = watchlistsStore.findIndex((wl) => wl.id === id);
+  const index = watchlistsStore.findIndex(
+    (wl) => wl.id === id && wl.ownerUserId === context.userId
+  );
 
   if (index === -1) {
     return null;
@@ -194,10 +215,15 @@ export async function removeItemFromWatchlist(
 }
 
 /**
- * Delete a watchlist
+ * Delete a watchlist (user-scoped)
  */
-export async function deleteWatchlist(id: string): Promise<void> {
-  const index = watchlistsStore.findIndex((wl) => wl.id === id);
+export async function deleteWatchlist(
+  context: WatchlistUserContext,
+  id: string
+): Promise<void> {
+  const index = watchlistsStore.findIndex(
+    (wl) => wl.id === id && wl.ownerUserId === context.userId
+  );
 
   if (index === -1) {
     throw new Error('Watchlist not found');

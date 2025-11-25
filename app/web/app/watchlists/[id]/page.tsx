@@ -1,16 +1,60 @@
 'use client';
 
+import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useState, useEffect, useMemo } from 'react';
-import { WatchlistItemCard } from '@/components/watchlists/WatchlistItemCard';
 import {
   WatchlistDetailHeaderSkeleton,
   WatchlistItemSkeleton,
 } from '@/components/watchlists/SkeletonLoader';
 import { ErrorState, NotFoundState } from '@/components/watchlists/ErrorState';
 import { EmptyState } from '@/components/watchlists/EmptyState';
+import { filterAndSortItems } from '@/modules/watchlists/filtering';
+import type { KindFilter, SortBy, SortDirection } from '@/modules/watchlists/filtering';
+import type { WatchlistItemEnriched } from '@/modules/watchlists/types';
+import {
+  getPrimarySignal,
+  getSeverityMeta,
+  getSignalCatalog,
+  hasSignalAtOrAbove,
+  type SignalResult,
+  type SignalSeverity,
+} from '@/modules/signals';
 
-interface WatchlistItemEnriched {
+/**
+ * Signal severity badge component
+ */
+function SignalBadge({ signal }: { signal: SignalResult }) {
+  const meta = getSeverityMeta(signal.severity);
+
+  const colorClasses: Record<string, string> = {
+    gray: 'bg-slate-700 text-slate-300',
+    blue: 'bg-blue-900/50 text-blue-300',
+    yellow: 'bg-yellow-900/50 text-yellow-300',
+    red: 'bg-red-900/50 text-red-300',
+  };
+
+  const badgeClass = colorClasses[meta.color] ?? colorClasses.gray;
+
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${badgeClass}`}
+      title={`${signal.label}: ${signal.value !== null ? `${signal.value.toFixed(0)}${signal.unit ?? ''}` : 'N/A'}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
+interface MarketSnapshot {
+  price: number | null;
+  change24hPct: number | null;
+  volume24h: number | null;
+  lastUpdated: string | null;
+}
+
+// API response item type (has nested market data and signals)
+interface WatchlistItemFromAPI {
   id: string;
   kind: 'token' | 'market';
   createdAt: string;
@@ -18,11 +62,10 @@ interface WatchlistItemEnriched {
   marketId?: string;
   symbol: string;
   name: string;
-  price?: number;
-  priceChange24h?: number;
-  volume24h?: number;
   baseSymbol?: string;
   quoteSymbol?: string;
+  market?: MarketSnapshot;
+  signals?: SignalResult[];
 }
 
 interface WatchlistEnriched {
@@ -31,20 +74,8 @@ interface WatchlistEnriched {
   description?: string;
   createdAt: string;
   updatedAt: string;
-  items: WatchlistItemEnriched[];
+  items: WatchlistItemFromAPI[];
 }
-
-interface WatchlistResponse {
-  success: boolean;
-  data?: {
-    watchlist: WatchlistEnriched;
-  };
-  error?: {
-    message: string;
-  };
-}
-
-type SortOption = 'added' | 'symbol' | 'price' | 'change';
 
 export default function WatchlistDetailPage() {
   const params = useParams();
@@ -69,8 +100,18 @@ export default function WatchlistDetailPage() {
   // Delete confirmation state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  // Sorting state
-  const [sortBy, setSortBy] = useState<SortOption>('added');
+  // Filtering and sorting state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
+  const [sortBy, setSortBy] = useState<SortBy>('name');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
+  // Signal filtering state
+  const [signalTypeFilter, setSignalTypeFilter] = useState<string>('any');
+  const [minSeverityFilter, setMinSeverityFilter] = useState<SignalSeverity | 'any'>('any');
+
+  // Get available signal types for dropdown
+  const signalCatalog = getSignalCatalog();
 
   const fetchWatchlist = async () => {
     try {
@@ -78,7 +119,7 @@ export default function WatchlistDetailPage() {
       setError(null);
       setNotFound(false);
 
-      const res = await fetch(`/api/watchlists/${id}`, {
+      const res = await fetch(`/api/watchlists/enriched/${id}`, {
         cache: 'no-store',
       });
 
@@ -91,16 +132,41 @@ export default function WatchlistDetailPage() {
         throw new Error('Failed to fetch watchlist');
       }
 
-      const json: WatchlistResponse = await res.json();
+      const json = await res.json();
 
-      if (!json.success || !json.data) {
+      if (!json.data?.watchlist) {
         throw new Error(json.error?.message || 'API returned error');
       }
 
-      setWatchlist(json.data.watchlist);
+      // The enriched endpoint returns WatchlistEnriched with real signals already computed
+      const enrichedWatchlist = json.data.watchlist;
+      
+      // Flatten the enriched response to match our component's expected format
+      const mappedWatchlist: WatchlistEnriched = {
+        id: enrichedWatchlist.id,
+        name: enrichedWatchlist.name,
+        description: enrichedWatchlist.description,
+        createdAt: enrichedWatchlist.createdAt,
+        updatedAt: enrichedWatchlist.updatedAt,
+        items: enrichedWatchlist.items.map((item: WatchlistItemEnriched) => ({
+          id: item.id,
+          kind: item.kind,
+          createdAt: item.createdAt,
+          tokenId: item.tokenId,
+          marketId: item.marketId,
+          symbol: item.symbol,
+          name: item.name,
+          baseSymbol: item.baseSymbol,
+          quoteSymbol: item.quoteSymbol,
+          market: item.market,
+          signals: item.signals,
+        })),
+      };
+
+      setWatchlist(mappedWatchlist);
       setEditData({
-        name: json.data.watchlist.name,
-        description: json.data.watchlist.description || '',
+        name: enrichedWatchlist.name,
+        description: enrichedWatchlist.description || '',
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -233,32 +299,51 @@ export default function WatchlistDetailPage() {
     }
   };
 
-  // Sort items based on selected option
-  const sortedItems = useMemo(() => {
+  // Filter and sort items
+  const filteredAndSortedItems = useMemo(() => {
     if (!watchlist) return [];
 
-    const items = [...watchlist.items];
+    // Convert API response items to WatchlistItemEnriched format (flatten market data)
+    const itemsWithCorrectFormat: WatchlistItemEnriched[] = watchlist.items.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      createdAt: item.createdAt,
+      tokenId: item.tokenId,
+      marketId: item.marketId,
+      symbol: item.symbol,
+      name: item.name,
+      signals: item.signals ?? [],
+      baseSymbol: item.baseSymbol,
+      quoteSymbol: item.quoteSymbol,
+      price: item.market?.price !== null ? item.market?.price : undefined,
+      priceChange24h: item.market?.change24hPct !== null ? item.market?.change24hPct : undefined,
+      volume24h: item.market?.volume24h !== null ? item.market?.volume24h : undefined,
+    }));
 
-    switch (sortBy) {
-      case 'symbol':
-        return items.sort((a, b) => a.symbol.localeCompare(b.symbol));
-      case 'price':
-        return items.sort((a, b) => {
-          if (a.price === undefined) return 1;
-          if (b.price === undefined) return -1;
-          return b.price - a.price;
-        });
-      case 'change':
-        return items.sort((a, b) => {
-          if (a.priceChange24h === undefined) return 1;
-          if (b.priceChange24h === undefined) return -1;
-          return b.priceChange24h - a.priceChange24h;
-        });
-      case 'added':
-      default:
-        return items;
+    // Apply base filtering (search, kind, sort)
+    let result = filterAndSortItems(itemsWithCorrectFormat, {
+      query: searchQuery,
+      kind: kindFilter,
+      sortBy,
+      direction: sortDirection,
+    });
+
+    // Apply signal type filter
+    if (signalTypeFilter !== 'any') {
+      result = result.filter((item) =>
+        item.signals.some((s) => s.id === signalTypeFilter && s.severity !== 'none')
+      );
     }
-  }, [watchlist, sortBy]);
+
+    // Apply min severity filter
+    if (minSeverityFilter !== 'any') {
+      result = result.filter((item) =>
+        hasSignalAtOrAbove(item.signals, minSeverityFilter)
+      );
+    }
+
+    return result;
+  }, [watchlist, searchQuery, kindFilter, sortBy, sortDirection, signalTypeFilter, minSeverityFilter]);
 
   // Loading state
   if (loading) {
@@ -327,6 +412,12 @@ export default function WatchlistDetailPage() {
               )}
             </div>
             <div className="flex gap-2 flex-shrink-0 flex-wrap">
+              <Link
+                href={`/opportunities?watchlistId=${encodeURIComponent(watchlist.id)}`}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-100 text-sm font-medium rounded-md transition-colors"
+              >
+                View in Opportunities
+              </Link>
               <button
                 onClick={fetchWatchlist}
                 disabled={updating}
@@ -421,26 +512,7 @@ export default function WatchlistDetailPage() {
       <div className="bg-slate-900 border border-slate-800 rounded-lg p-6">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-4">
           <h2 className="text-lg font-medium">Items ({watchlist.items.length})</h2>
-          <div className="flex gap-2 items-center flex-wrap">
-            {/* Sort dropdown */}
-            {watchlist.items.length > 0 && (
-              <div className="flex items-center gap-2">
-                <label htmlFor="sort" className="text-sm text-slate-400">
-                  Sort:
-                </label>
-                <select
-                  id="sort"
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as SortOption)}
-                  className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-sm text-slate-200 focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="added">Date Added</option>
-                  <option value="symbol">Symbol (A-Z)</option>
-                  <option value="price">Price (High-Low)</option>
-                  <option value="change">24h Change</option>
-                </select>
-              </div>
-            )}
+          <div className="flex gap-2">
             <button
               onClick={() => setShowAddForm(!showAddForm)}
               disabled={updating}
@@ -450,6 +522,111 @@ export default function WatchlistDetailPage() {
             </button>
           </div>
         </div>
+
+        {/* Toolbar: Search, Kind Filter, Sort */}
+        {watchlist.items.length > 0 && (
+          <div className="mb-4 space-y-3">
+            {/* Search */}
+            <div>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by symbol or name..."
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-md text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            {/* Filters and Sort */}
+            <div className="flex flex-wrap gap-3 items-center">
+              {/* Kind filter */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-slate-400">Show:</label>
+                <select
+                  value={kindFilter}
+                  onChange={(e) => setKindFilter(e.target.value as KindFilter)}
+                  className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-sm text-slate-200 focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">All</option>
+                  <option value="token">Tokens</option>
+                  <option value="market">Markets</option>
+                </select>
+              </div>
+
+              {/* Sort by */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-slate-400">Sort by:</label>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as SortBy)}
+                  className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-sm text-slate-200 focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="name">Name</option>
+                  <option value="price">Price</option>
+                  <option value="changeAbs">24h Change (abs %)</option>
+                  <option value="volume">Volume</option>
+                </select>
+              </div>
+
+              {/* Direction */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-md text-sm text-slate-200 transition-colors flex items-center gap-1.5"
+                  title={sortDirection === 'asc' ? 'Ascending' : 'Descending'}
+                >
+                  {sortDirection === 'asc' ? (
+                    <>
+                      Asc
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                      </svg>
+                    </>
+                  ) : (
+                    <>
+                      Desc
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Signal type filter */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-slate-400">Signal:</label>
+                <select
+                  value={signalTypeFilter}
+                  onChange={(e) => setSignalTypeFilter(e.target.value)}
+                  className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-sm text-slate-200 focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="any">Any</option>
+                  {signalCatalog.map((signal) => (
+                    <option key={signal.id} value={signal.id}>
+                      {signal.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Min severity filter */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm text-slate-400">Min Severity:</label>
+                <select
+                  value={minSeverityFilter}
+                  onChange={(e) => setMinSeverityFilter(e.target.value as SignalSeverity | 'any')}
+                  className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-md text-sm text-slate-200 focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="any">Any</option>
+                  <option value="info">Info</option>
+                  <option value="watch">Watch</option>
+                  <option value="action">Action</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Add item form */}
         {showAddForm && (
@@ -510,16 +687,110 @@ export default function WatchlistDetailPage() {
         )}
 
         {/* Items list */}
-        {sortedItems.length > 0 ? (
-          <div className="space-y-3">
-            {sortedItems.map((item) => (
-              <WatchlistItemCard
-                key={item.id}
-                item={item}
-                onRemove={handleRemoveItem}
-                disabled={updating}
-              />
-            ))}
+        {filteredAndSortedItems.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-slate-800">
+                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">Symbol</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">Name</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">Type</th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-400">Signals</th>
+                  <th className="text-right py-3 px-4 text-sm font-medium text-slate-400">Price</th>
+                  <th className="text-right py-3 px-4 text-sm font-medium text-slate-400">24h %</th>
+                  <th className="text-right py-3 px-4 text-sm font-medium text-slate-400">24h Volume</th>
+                  <th className="text-right py-3 px-4 text-sm font-medium text-slate-400">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAndSortedItems.map((item) => {
+                  const price = item.price;
+                  const change24h = item.priceChange24h;
+                  const volume24h = item.volume24h;
+                  const primarySignal = getPrimarySignal(item.signals);
+                  const signalCount = item.signals.filter((s) => s.severity !== 'none').length;
+
+                  return (
+                    <tr key={item.id} className="border-b border-slate-800 hover:bg-slate-800/50">
+                      <td className="py-3 px-4">
+                        <Link
+                          href={`/assets/${item.id}`}
+                          className="text-blue-400 hover:text-blue-300 hover:underline font-medium"
+                        >
+                          {item.symbol}
+                        </Link>
+                      </td>
+                      <td className="py-3 px-4 text-sm text-slate-300">
+                        <Link
+                          href={`/assets/${item.id}`}
+                          className="hover:text-slate-100 hover:underline"
+                        >
+                          {item.name}
+                        </Link>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="text-xs text-slate-400 uppercase tracking-wide">
+                          {item.kind}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        {primarySignal ? (
+                          <div className="flex items-center gap-2">
+                            <SignalBadge signal={primarySignal} />
+                            {signalCount > 1 && (
+                              <span className="text-xs text-slate-500">+{signalCount - 1}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-500">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right text-sm font-medium text-slate-100">
+                        {price !== null && price !== undefined
+                          ? `$${price.toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}`
+                          : '—'}
+                      </td>
+                      <td className="py-3 px-4 text-right text-sm font-medium">
+                        {change24h !== null && change24h !== undefined ? (
+                          <span className={change24h >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            {change24h >= 0 ? '+' : ''}
+                            {change24h.toFixed(2)}%
+                          </span>
+                        ) : (
+                          <span className="text-slate-500">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right text-sm text-slate-300">
+                        {volume24h !== null && volume24h !== undefined
+                          ? `$${volume24h.toLocaleString(undefined, {
+                              maximumFractionDigits: 0,
+                            })}`
+                          : '—'}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => handleRemoveItem(item.id)}
+                          disabled={updating}
+                          className="px-3 py-1.5 text-xs bg-red-900/30 hover:bg-red-900/50 disabled:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 text-red-400 rounded-md transition-colors"
+                          aria-label="Remove item"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : watchlist.items.length > 0 ? (
+          <div className="text-center py-12">
+            <p className="text-slate-400 text-sm">
+              No items match your current filters.
+            </p>
           </div>
         ) : (
           <EmptyState

@@ -1,4 +1,12 @@
-import type { Token, Market } from '../markets';
+import type { Token, Market, PriceFeed } from '../markets';
+import type { SignalResult } from '../signals';
+
+/**
+ * User context for scoping watchlist operations
+ */
+export interface WatchlistUserContext {
+  userId: string;
+}
 
 export interface WatchlistItem {
   id: string;
@@ -9,6 +17,7 @@ export interface WatchlistItem {
 
 export interface Watchlist {
   id: string;
+  ownerUserId: string;
   name: string;
   description?: string;
   items: WatchlistItem[];
@@ -18,6 +27,7 @@ export interface Watchlist {
 
 export interface WatchlistWithRelations {
   id: string;
+  ownerUserId: string;
   name: string;
   description?: string;
   createdAt: string;
@@ -38,6 +48,8 @@ export interface WatchlistItemEnriched {
   id: string;
   kind: 'token' | 'market';
   createdAt: string;
+  signals: SignalResult[];
+
 
   // IDs for reference
   tokenId?: string;
@@ -51,6 +63,11 @@ export interface WatchlistItemEnriched {
   price?: number;
   priceChange24h?: number;
   volume24h?: number;
+  market?: Market & {
+    baseToken: Token;
+    quoteToken: Token;
+  };
+  priceFeed?: PriceFeed;
 
   // For markets, include pair information
   baseSymbol?: string;
@@ -59,6 +76,7 @@ export interface WatchlistItemEnriched {
 
 export interface WatchlistEnriched {
   id: string;
+  ownerUserId: string;
   name: string;
   description?: string;
   createdAt: string;

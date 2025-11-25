@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { WatchlistCard } from '@/components/watchlists/WatchlistCard';
 import { WatchlistCardSkeleton } from '@/components/watchlists/SkeletonLoader';
 import { ErrorState } from '@/components/watchlists/ErrorState';
 import { EmptyState } from '@/components/watchlists/EmptyState';
+import { searchWatchlists } from '@/modules/watchlists/filtering';
+import type { DashboardWatchlistSummary } from '@/modules/watchlists/dashboard';
 
 interface WatchlistItemEnriched {
   id: string;
@@ -44,6 +46,7 @@ export default function WatchlistsPage() {
   const [creating, setCreating] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [formData, setFormData] = useState({ name: '', description: '' });
+  const [searchQuery, setSearchQuery] = useState('');
 
   const fetchWatchlists = async () => {
     try {
@@ -74,6 +77,21 @@ export default function WatchlistsPage() {
   useEffect(() => {
     fetchWatchlists();
   }, []);
+
+  // Convert watchlists to dashboard summary format and filter by search
+  const filteredWatchlists = useMemo(() => {
+    const summaries: DashboardWatchlistSummary[] = watchlists.map((wl) => ({
+      id: wl.id,
+      name: wl.name,
+      description: wl.description ?? null,
+      ownerUserId: '',
+      itemCount: wl.items.length,
+      createdAt: wl.createdAt,
+      updatedAt: wl.updatedAt,
+    }));
+
+    return searchWatchlists(summaries, searchQuery);
+  }, [watchlists, searchQuery]);
 
   const handleCreateWatchlist = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,13 +132,14 @@ export default function WatchlistsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Watchlists</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Browse your cryptocurrency watchlists
-          </p>
-        </div>
+      <div className="space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold">Watchlists</h1>
+            <p className="text-sm text-slate-400 mt-1">
+              Browse your cryptocurrency watchlists
+            </p>
+          </div>
         <div className="flex gap-2">
           {!loading && (
             <button
@@ -152,6 +171,20 @@ export default function WatchlistsPage() {
             {showCreateForm ? 'Cancel' : 'Create Watchlist'}
           </button>
         </div>
+        </div>
+
+        {/* Search bar */}
+        {!loading && watchlists.length > 0 && (
+          <div>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search watchlists by name or description..."
+              className="w-full px-4 py-2 bg-slate-800 border border-slate-700 rounded-md text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        )}
       </div>
 
       {/* Error state */}
@@ -235,11 +268,19 @@ export default function WatchlistsPage() {
       )}
 
       {/* Watchlists grid */}
-      {!loading && !error && watchlists.length > 0 && (
+      {!loading && !error && watchlists.length > 0 && filteredWatchlists.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {watchlists.map((watchlist) => (
-            <WatchlistCard key={watchlist.id} watchlist={watchlist} />
-          ))}
+          {filteredWatchlists.map((summary) => {
+            const watchlist = watchlists.find((wl) => wl.id === summary.id);
+            return watchlist ? <WatchlistCard key={watchlist.id} watchlist={watchlist} /> : null;
+          })}
+        </div>
+      )}
+
+      {/* No results from search */}
+      {!loading && !error && watchlists.length > 0 && filteredWatchlists.length === 0 && (
+        <div className="text-center py-12">
+          <p className="text-slate-400 text-sm">No watchlists found matching &ldquo;{searchQuery}&rdquo;</p>
         </div>
       )}
 

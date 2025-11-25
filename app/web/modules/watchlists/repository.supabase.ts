@@ -2,7 +2,7 @@
 // Supabase repository implementation for watchlists
 
 import { createClient } from '@supabase/supabase-js';
-import type { Watchlist, WatchlistItem } from './types';
+import type { Watchlist, WatchlistItem, WatchlistUserContext } from './types';
 import type {
   CreateWatchlistInput,
   UpdateWatchlistInput,
@@ -23,6 +23,7 @@ const supabase = createClient(supabaseUrl, supabaseAnonKey);
 // Database row types
 interface WatchlistRow {
   id: string;
+  owner_user_id: string;
   name: string;
   description: string | null;
   created_at: string;
@@ -47,6 +48,7 @@ function mapWatchlistRow(
 ): Watchlist {
   return {
     id: row.id,
+    ownerUserId: row.owner_user_id,
     name: row.name,
     description: row.description ?? undefined,
     createdAt: row.created_at,
@@ -75,12 +77,15 @@ function mapWatchlistItemRow(row: WatchlistItemRow): WatchlistItem {
 }
 
 /**
- * List all watchlists (no auth for now)
+ * List all watchlists for a specific user
  */
-export async function listWatchlists(): Promise<Watchlist[]> {
+export async function listWatchlists(
+  context: WatchlistUserContext
+): Promise<Watchlist[]> {
   const { data: watchlistRows, error: watchlistError } = await supabase
     .from('watchlists')
     .select('*')
+    .eq('owner_user_id', context.userId)
     .order('created_at', { ascending: false });
 
   if (watchlistError) {
@@ -120,12 +125,14 @@ export async function listWatchlists(): Promise<Watchlist[]> {
  * Get a single watchlist by ID
  */
 export async function getWatchlistById(
+  context: WatchlistUserContext,
   id: string
 ): Promise<Watchlist | null> {
   const { data: watchlistRow, error: watchlistError } = await supabase
     .from('watchlists')
     .select('*')
     .eq('id', id)
+    .eq('owner_user_id', context.userId)
     .single();
 
   if (watchlistError) {
@@ -161,11 +168,13 @@ export async function getWatchlistById(
  * Create a new watchlist
  */
 export async function createWatchlist(
+  context: WatchlistUserContext,
   input: CreateWatchlistInput
 ): Promise<Watchlist> {
   const { data: watchlistRow, error } = await supabase
     .from('watchlists')
     .insert({
+      owner_user_id: context.userId,
       name: input.name,
       description: input.description ?? null,
     })
@@ -187,6 +196,7 @@ export async function createWatchlist(
  * Update watchlist metadata (name, description)
  */
 export async function updateWatchlist(
+  context: WatchlistUserContext,
   id: string,
   input: UpdateWatchlistInput
 ): Promise<Watchlist | null> {
@@ -203,6 +213,7 @@ export async function updateWatchlist(
     .from('watchlists')
     .update(updateData)
     .eq('id', id)
+    .eq('owner_user_id', context.userId)
     .select()
     .single();
 
@@ -237,11 +248,12 @@ export async function updateWatchlist(
  * Add a token to watchlist
  */
 export async function addTokenToWatchlist(
+  context: WatchlistUserContext,
   id: string,
   tokenId: string
 ): Promise<Watchlist | null> {
-  // Check if watchlist exists
-  const watchlist = await getWatchlistById(id);
+  // Check if watchlist exists and belongs to user
+  const watchlist = await getWatchlistById(context, id);
   if (!watchlist) {
     return null;
   }
@@ -267,18 +279,19 @@ export async function addTokenToWatchlist(
   }
 
   // Return updated watchlist
-  return getWatchlistById(id);
+  return getWatchlistById(context, id);
 }
 
 /**
  * Add a market to watchlist
  */
 export async function addMarketToWatchlist(
+  context: WatchlistUserContext,
   id: string,
   marketId: string
 ): Promise<Watchlist | null> {
-  // Check if watchlist exists
-  const watchlist = await getWatchlistById(id);
+  // Check if watchlist exists and belongs to user
+  const watchlist = await getWatchlistById(context, id);
   if (!watchlist) {
     return null;
   }
@@ -304,18 +317,19 @@ export async function addMarketToWatchlist(
   }
 
   // Return updated watchlist
-  return getWatchlistById(id);
+  return getWatchlistById(context, id);
 }
 
 /**
  * Remove an item from watchlist
  */
 export async function removeItemFromWatchlist(
+  context: WatchlistUserContext,
   id: string,
   itemId: string
 ): Promise<Watchlist | null> {
-  // Check if watchlist exists
-  const watchlist = await getWatchlistById(id);
+  // Check if watchlist exists and belongs to user
+  const watchlist = await getWatchlistById(context, id);
   if (!watchlist) {
     return null;
   }
@@ -340,14 +354,21 @@ export async function removeItemFromWatchlist(
   }
 
   // Return updated watchlist
-  return getWatchlistById(id);
+  return getWatchlistById(context, id);
 }
 
 /**
  * Delete a watchlist
  */
-export async function deleteWatchlist(id: string): Promise<void> {
-  const { error } = await supabase.from('watchlists').delete().eq('id', id);
+export async function deleteWatchlist(
+  context: WatchlistUserContext,
+  id: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('watchlists')
+    .delete()
+    .eq('id', id)
+    .eq('owner_user_id', context.userId);
 
   if (error) {
     throw new Error(`Failed to delete watchlist ${id}: ${error.message}`);

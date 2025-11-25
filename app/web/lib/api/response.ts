@@ -1,4 +1,3 @@
-// app/web/lib/api/response.ts
 import { NextResponse } from 'next/server';
 
 type SuccessResponse<T> = {

@@ -427,6 +427,213 @@ For teams deploying to production:
 - **Audit logging**: Track all CRUD operations for debugging and compliance
 - **Data migration tooling**: CLI script to migrate from memory to Supabase
 
+## Normalized Architecture: Dual Service API (Milestone 18)
+
+### Overview
+
+**Milestone 18** introduces a normalized architecture for watchlist data access, addressing a key architectural concern: the distinction between raw watchlist data (stored state) and enriched watchlist data (computed display state).
+
+Previously, both APIs were mixing concerns:
+- Raw service API (`listWatchlists()`, `getWatchlistById()`) was synchronous but used type casts to pretend items were enriched
+- Enrichment functions (`enrichWatchlists()`, `enrichWatchlist()`) existed but weren't exposed in the main service API
+- UI components were manually mapping raw data to enriched shapes with placeholder signals
+
+**Decision**: Implement a **Dual Service API** pattern to clarify the async/sync boundary and make signal computation explicit and guaranteed.
+
+### Service Layer (Module API)
+
+**`modules/watchlists/service.ts`** now provides two distinct APIs:
+
+#### Raw Synchronous API
+```typescript
+export function listWatchlists(): Watchlist[]
+export function getWatchlistById(id: string): Watchlist | undefined
+export function listWatchlistsWithRelations(): WatchlistWithRelations[]
+export function getWatchlistWithRelationsById(id: string): WatchlistWithRelations | undefined
+```
+
+**Purpose**: Low-level access to persistent watchlist data without enrichment.
+
+**Guarantees**:
+- Synchronous, zero I/O
+- Returns raw persistent state exactly as stored
+- No computed fields (no signals, no price data, no market data)
+- Items have no enrichment information
+- Safe for internal domain logic that doesn't need market context
+
+**Use cases**:
+- Domain operations (create, update, delete)
+- Internal calculations on watchlist structure
+- Testing domain invariants
+- Repository layer operations
+
+#### Enriched Async API (NEW)
+```typescript
+export async function listWatchlistsEnriched(): Promise<WatchlistEnriched[]>
+export async function getWatchlistEnriched(id: string): Promise<WatchlistEnriched | undefined>
+```
+
+**Purpose**: High-level access to ready-for-display watchlist data with all computed fields.
+
+**Guarantees**:
+- Async (calls MarketDataProvider for prices and market data)
+- Returns enriched display state with all computed fields
+- Signals are **always real**, computed via `runBuiltinSignalsForSnapshot()`
+  - Non-null signals field guaranteed to be an array
+  - Items with market snapshots have real signal computation results
+  - Items without market snapshots have empty signal array (never undefined)
+- Price, priceChange24h, and volume24h populated from market data provider
+- Full market and priceFeed objects attached for market items
+- Market field resolved for token items (e.g., btc-usdt for btc token)
+
+**Use cases**:
+- API responses for client UI
+- Dashboard widgets needing current market data
+- Server-side rendering with computed fields
+- Any code that needs signals or price data
+
+**No type lies**: If you're working with `WatchlistItemEnriched`, signals are guaranteed real (computed during enrichment), never faked or placeholder values.
+
+### API Endpoints
+
+**GET /api/watchlists** (unchanged)
+- Still returns raw watchlists with relations (via old enrichWatchlists call)
+- **Future**: Could be updated to use new enriched API for consistency
+
+**GET /api/watchlists/[id]** (unchanged)
+- Still returns raw watchlist with relations
+- **Future**: Could be updated to use new enriched API for consistency
+
+**GET /api/watchlists/enriched** (NEW)
+- Returns all enriched watchlists
+- Route: `app/api/watchlists/enriched/route.ts`
+- Uses new `listWatchlistsEnriched()` service method
+- Guarantees real signals and market data
+
+**GET /api/watchlists/enriched/[id]** (NEW)
+- Returns single enriched watchlist by ID
+- Route: `app/api/watchlists/enriched/[id]/route.ts`
+- Uses new `getWatchlistEnriched()` service method
+- Guarantees real signals and market data
+
+### Dashboard Module
+
+**`modules/watchlists/dashboard.ts`** now provides both APIs:
+
+```typescript
+// Raw synchronous API (unchanged)
+export function getTopMovers(limit?: number): DashboardTopMover[]
+
+// Enriched async API (NEW)
+export async function getTopMoversEnriched(limit?: number): Promise<DashboardTopMover[]>
+```
+
+Both functions perform the same operation (sort by absolute 24h change, respect limit), but:
+- `getTopMovers()` works with raw data from `listWatchlists()`
+- `getTopMoversEnriched()` works with enriched data from `listWatchlistsEnriched()`
+
+No more type casts: Both functions are honestly typed, no pretending raw items are enriched.
+
+### Signal Computation Guarantee
+
+**Architecture principle**: Signals are **never faked** in non-test code.
+
+**Guarantee**: If you have `WatchlistItemEnriched`, signals are guaranteed real:
+- Computed via `runBuiltinSignalsForSnapshot()` during enrichment
+- Populated from `modules/signals/builtin/` signal definitions
+- Based on live market snapshot data from MarketDataProvider
+- Never empty array except when snapshot is unavailable
+
+**Test exceptions** (acceptable):
+- Test mocks can use `signals: []` placeholders for tests not focused on signal computation
+- Tests focused on enrichment explicitly verify signal computation
+
+**Type system enforcement**:
+- `WatchlistItemEnriched.signals` is required field (non-optional)
+- Type system prevents accidental omission
+- Tests verify signals are always arrays (never undefined)
+
+### Migration from Old Architecture
+
+**For API consumers** (frontend/dashboards):
+1. Switch from `/api/watchlists/{id}` to `/api/watchlists/enriched/{id}`
+2. Remove manual signal computation or `signals: []` placeholders
+3. Use signals directly from response
+
+**For dashboard widgets**:
+1. Replace `getTopMovers()` calls with `getTopMoversEnriched()`
+2. Add `await` keyword (function is now async)
+3. Signals and market data automatically included
+
+**For tests**:
+1. Tests focused on enrichment explicitly mock `listWatchlistsEnriched()` as async
+2. Mock data includes `signals: []` only where appropriate
+3. Tests verify signal computation via `Array.isArray(signals)` and structure checks
+
+### Benefits
+
+**Type safety**: No more type casts (`as WatchlistItemEnriched`). Items are honestly typed from the source.
+
+**Explicit async boundary**: Clear separation between sync raw API (no I/O) and async enriched API (requires market data).
+
+**Signal integrity**: Signals are always real in production code, never faked. Type system and tests enforce this.
+
+**Better testing**: Tests can be honest about whether data is enriched or raw. No hidden assumptions.
+
+**Future-proof**: If enrichment adds more computed fields (e.g., portfolio allocation, risk scoring), the enriched API naturally extends.
+
+### Design Decisions
+
+**Dual API instead of replacing raw**: Kept raw API for:
+- Internal domain operations (create/update/delete don't need enrichment)
+- Performance-sensitive operations that don't need market data
+- Testing domain logic without market provider
+
+**Async enriched, not async raw**: Raw API stays sync because it's just in-memory queries. Only enriched API is async (needs external market data).
+
+**Signal computation in enrichment**: Signals only computed in enrichment layer:
+- Single source of truth for signal logic
+- Clear point of computation (not scattered in UI)
+- Testable in isolation
+- Easily cacheable if needed
+
+**No type lies in service layer**: Both APIs return honestly-typed data:
+- Raw API doesn't pretend to have enriched fields
+- Enriched API guarantees all fields are populated
+- UI must explicitly choose which API to use
+
+### Test Coverage
+
+**Enrichment tests** (`tests/watchlists/enrichment.test.ts`):
+- Verify signals are real arrays for items with market snapshots
+- Verify signals are empty arrays (not undefined) for missing snapshots
+- Document the guarantee: signals are never undefined
+
+**Dashboard tests** (`tests/watchlists/dashboard.test.ts`):
+- Test both `getTopMovers()` and `getTopMoversEnriched()`
+- Verify enriched version produces same sorting as raw version
+- Mock `listWatchlistsEnriched()` as async with proper Promise handling
+
+**Service tests** (implicit via integration tests):
+- Verify enriched endpoints return properly typed responses
+- Verify enriched data includes all computed fields
+
+### Limitations
+
+**No automatic migration**: Existing callers of raw API must explicitly switch to enriched API.
+
+**Dual API maintenance**: Code paths need testing for both raw and enriched variants.
+
+**No caching of enriched results**: Each call to enriched API re-computes signals and market data (enrichment price cache helps but doesn't fully cache enriched objects).
+
+### Future Considerations
+
+- **Cache enriched results**: Add Redis or similar to cache enriched watchlists with TTL
+- **Streaming signals**: Replace batch signal computation with streaming updates as market data changes
+- **Computed properties**: Add portfolio allocation, portfolio risk, or other computed fields to enriched data
+- **Selective enrichment**: Allow query parameter like `?include=signals,prices` to choose which computed fields to include
+- **Deprecate old endpoints**: Once UI migrated, consider removing raw watchlist endpoints and renaming enriched endpoints
+
 ## Alternatives Considered
 
 ### Combined Token/Market Field

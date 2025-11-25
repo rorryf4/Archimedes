@@ -1,5 +1,5 @@
 import { ok, error } from '@/lib/api/response';
-import { enrichWatchlist } from '@/modules/watchlists';
+import { enrichWatchlist, getCurrentUserContext } from '@/modules/watchlists';
 import * as repository from '@/modules/watchlists/repository';
 import { PatchWatchlistInputSchema } from '@/modules/watchlists/validation';
 
@@ -12,8 +12,9 @@ interface Params {
 }
 
 export async function GET(_request: Request, { params }: Params) {
+  const context = getCurrentUserContext();
   const { id } = await params;
-  const rawWatchlist = await repository.getWatchlistById(id);
+  const rawWatchlist = await repository.getWatchlistById(context, id);
 
   if (!rawWatchlist) {
     return error('Watchlist not found', 404);
@@ -28,6 +29,7 @@ export async function GET(_request: Request, { params }: Params) {
 
 export async function PATCH(request: Request, { params }: Params) {
   try {
+    const context = getCurrentUserContext();
     const { id } = await params;
     const body = await request.json();
 
@@ -40,29 +42,32 @@ export async function PATCH(request: Request, { params }: Params) {
     }
 
     const data = validation.data;
-    let watchlist: Awaited<ReturnType<typeof repository.getWatchlistById>>;
+    let rawWatchlist: Awaited<ReturnType<typeof repository.getWatchlistById>>;
 
     switch (data.action) {
       case 'update-metadata':
-        watchlist = await repository.updateWatchlist(id, data.data);
+        rawWatchlist = await repository.updateWatchlist(context, id, data.data);
         break;
 
       case 'add-token':
-        watchlist = await repository.addTokenToWatchlist(
+        rawWatchlist = await repository.addTokenToWatchlist(
+          context,
           id,
           data.data.tokenId
         );
         break;
 
       case 'add-market':
-        watchlist = await repository.addMarketToWatchlist(
+        rawWatchlist = await repository.addMarketToWatchlist(
+          context,
           id,
           data.data.marketId
         );
         break;
 
       case 'remove-item':
-        watchlist = await repository.removeItemFromWatchlist(
+        rawWatchlist = await repository.removeItemFromWatchlist(
+          context,
           id,
           data.data.itemId
         );
@@ -72,9 +77,11 @@ export async function PATCH(request: Request, { params }: Params) {
         return error('Invalid action', 400);
     }
 
-    if (!watchlist) {
+    if (!rawWatchlist) {
       return error('Watchlist not found', 404);
     }
+
+    const watchlist = enrichWatchlist(rawWatchlist);
 
     return ok({ watchlist });
   } catch (err) {
@@ -85,9 +92,10 @@ export async function PATCH(request: Request, { params }: Params) {
 
 export async function DELETE(_request: Request, { params }: Params) {
   try {
+    const context = getCurrentUserContext();
     const { id } = await params;
 
-    await repository.deleteWatchlist(id);
+    await repository.deleteWatchlist(context, id);
 
     return ok({ success: true });
   } catch (err) {

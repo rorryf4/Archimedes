@@ -1,6 +1,7 @@
 import { listTokens, listMarkets } from '../markets';
 import { WATCHLISTS } from './data';
-import type { Watchlist, WatchlistWithRelations } from './types';
+import { enrichWatchlists, enrichWatchlist } from './enrichment';
+import type { Watchlist, WatchlistWithRelations, WatchlistEnriched } from './types';
 
 export function listWatchlists(): Watchlist[] {
   return WATCHLISTS;
@@ -16,6 +17,7 @@ export function listWatchlistsWithRelations(): WatchlistWithRelations[] {
 
   return WATCHLISTS.map((watchlist) => ({
     id: watchlist.id,
+    ownerUserId: watchlist.ownerUserId,
     name: watchlist.name,
     description: watchlist.description,
     createdAt: watchlist.createdAt,
@@ -52,6 +54,7 @@ export function getWatchlistWithRelationsById(
 
   return {
     id: watchlist.id,
+    ownerUserId: watchlist.ownerUserId,
     name: watchlist.name,
     description: watchlist.description,
     createdAt: watchlist.createdAt,
@@ -72,4 +75,23 @@ export function getWatchlistWithRelationsById(
       };
     }),
   };
+}
+
+/**
+ * Enriched async service methods that include computed signals and market data
+ */
+
+export async function listWatchlistsEnriched(): Promise<WatchlistEnriched[]> {
+  const watchlists = listWatchlists();
+  return enrichWatchlists(watchlists);
+}
+
+export async function getWatchlistEnriched(
+  id: string
+): Promise<WatchlistEnriched | undefined> {
+  const watchlist = getWatchlistById(id);
+  if (!watchlist) {
+    return undefined;
+  }
+  return enrichWatchlist(watchlist);
 }

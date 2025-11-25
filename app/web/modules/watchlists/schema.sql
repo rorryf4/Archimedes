@@ -4,6 +4,7 @@
 -- Create watchlists table
 CREATE TABLE IF NOT EXISTS watchlists (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_user_id UUID NOT NULL,
   name TEXT NOT NULL,
   description TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -50,3 +51,12 @@ CREATE TRIGGER update_watchlists_updated_at
   BEFORE UPDATE ON watchlists
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
+
+-- Create index on owner_user_id for faster user-scoped queries
+CREATE INDEX IF NOT EXISTS idx_watchlists_owner_user_id ON watchlists(owner_user_id);
+
+-- Backfill existing watchlists with a default owner (for development only)
+-- This ensures existing data has a valid owner_user_id
+UPDATE watchlists
+SET owner_user_id = '00000000-0000-0000-0000-000000000000'
+WHERE owner_user_id IS NULL;

@@ -1,86 +1,76 @@
 // app/web/modules/watchlists/enrichment.ts
-import { listTokens, getMarketById, getLatestPriceFeedForMarket } from '../markets';
-import type { Watchlist, WatchlistEnriched, WatchlistItemEnriched } from './types';
+import { getMarketDataProvider } from '../markets/marketData';
+import type {
+  MarketDataProvider,
+  MarketQuery,
+  MarketSnapshot,
+} from '../markets/marketData';
+import { listTokens, getMarketById } from '../markets';
+import type {
+  Watchlist,
+  WatchlistEnriched,
+  WatchlistItemEnriched,
+} from './types';
+import {
+  runBuiltinSignalsForSnapshot,
+} from '../signals';
+import type { SignalResult } from '../signals';
 
 /**
- * Simple in-memory cache for price data to avoid repeated lookups
- * TTL: 60 seconds
+ * Build a stable key for mapping snapshots back to items
  */
-interface CacheEntry<T> {
-  data: T;
-  fetchedAt: number;
+function buildSnapshotKey(item: Watchlist['items'][number]): string {
+  if (item.tokenId) {
+    return `token:${item.tokenId}`;
+  }
+  if (item.marketId) {
+    return `market:${item.marketId}`;
+  }
+  return `unknown:${item.id}`;
 }
 
-const priceCache = new Map<string, CacheEntry<number>>();
-const CACHE_TTL_MS = 60_000; // 60 seconds
+/**
+ * Convert watchlist items into MarketQuery array
+ */
+function buildMarketQueries(items: Watchlist['items']): MarketQuery[] {
+  const queries: MarketQuery[] = [];
 
-function getCachedPrice(marketId: string): number | undefined {
-  const entry = priceCache.get(marketId);
-  if (!entry) return undefined;
-
-  const now = Date.now();
-  if (now - entry.fetchedAt > CACHE_TTL_MS) {
-    priceCache.delete(marketId);
-    return undefined;
+  for (const item of items) {
+    if (item.tokenId) {
+      queries.push({ kind: 'token', token: item.tokenId });
+    } else if (item.marketId) {
+      queries.push({ kind: 'market', market: item.marketId });
+    }
   }
 
-  return entry.data;
-}
-
-function setCachedPrice(marketId: string, price: number): void {
-  priceCache.set(marketId, {
-    data: price,
-    fetchedAt: Date.now(),
-  });
+  return queries;
 }
 
 /**
- * Get price for a market with caching
+ * Map snapshots back to items using stable keys
  */
-function getMarketPrice(marketId: string): number | undefined {
-  // Check cache first
-  const cached = getCachedPrice(marketId);
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  // Fetch fresh price
-  const priceFeed = getLatestPriceFeedForMarket(marketId);
-  if (priceFeed) {
-    setCachedPrice(marketId, priceFeed.price);
-    return priceFeed.price;
-  }
-
-  return undefined;
-}
-
-/**
- * Generate mock 24h price change percentage for demonstration
- * In production, this would come from a real price history service
- */
-function getMockPriceChange24h(marketId: string): number {
-  // Use marketId to generate a stable but varied mock value between -10% and +10%
-  const hash = marketId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  return ((hash % 2000) - 1000) / 100; // Range: -10.00 to +10.00
-}
-
-/**
- * Generate mock 24h volume for demonstration
- * In production, this would come from a real volume tracking service
- */
-function getMockVolume24h(marketId: string): number {
-  // Use marketId to generate a stable but varied mock volume
-  const hash = marketId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  return (hash % 10000000) + 1000000; // Range: 1M to 11M
+function mapSnapshotsToItems(
+  items: Watchlist['items'],
+  snapshots: Map<string, MarketSnapshot | null>,
+): Map<string, MarketSnapshot | null> {
+  // Provider already returns Map, just return it directly
+  return snapshots;
 }
 
 /**
  * Enrich a single watchlist item with market data
  */
 function enrichWatchlistItem(
-  item: Watchlist['items'][number]
+  item: Watchlist['items'][number],
+  snapshotMap: Map<string, MarketSnapshot | null>,
 ): WatchlistItemEnriched {
   const tokens = listTokens();
+  const key = buildSnapshotKey(item);
+  const snapshot = snapshotMap.get(key) ?? null;
+
+  const signals: SignalResult[] = snapshot
+    ? runBuiltinSignalsForSnapshot(snapshot, {})
+    : [];
 
   // Token item
   if (item.tokenId) {
@@ -95,15 +85,12 @@ function enrichWatchlistItem(
         tokenId: item.tokenId,
         symbol: item.tokenId.toUpperCase(),
         name: 'Unknown Token',
+        signals,
       };
     }
 
-    // For tokens, we can try to find a market to get price data
-    // Look for any market where this token is the base token
+    // Try to find a market for additional context
     const market = getMarketById(`${item.tokenId}-usdt`);
-    const price = market ? getMarketPrice(market.id) : undefined;
-    const priceChange24h = market ? getMockPriceChange24h(market.id) : undefined;
-    const volume24h = market ? getMockVolume24h(market.id) : undefined;
 
     return {
       id: item.id,
@@ -112,9 +99,11 @@ function enrichWatchlistItem(
       tokenId: item.tokenId,
       symbol: token.symbol,
       name: token.name,
-      price,
-      priceChange24h,
-      volume24h,
+      price: snapshot?.price ?? undefined,
+      priceChange24h: snapshot?.change24hPct ?? undefined,
+      volume24h: snapshot?.volume24h ?? undefined,
+      market: market || undefined,
+      signals,
     };
   }
 
@@ -131,12 +120,9 @@ function enrichWatchlistItem(
         marketId: item.marketId,
         symbol: item.marketId.toUpperCase(),
         name: 'Unknown Market',
+        signals,
       };
     }
-
-    const price = getMarketPrice(market.id);
-    const priceChange24h = getMockPriceChange24h(market.id);
-    const volume24h = getMockVolume24h(market.id);
 
     return {
       id: item.id,
@@ -147,9 +133,11 @@ function enrichWatchlistItem(
       name: `${market.baseToken.name} / ${market.quoteToken.name}`,
       baseSymbol: market.baseToken.symbol,
       quoteSymbol: market.quoteToken.symbol,
-      price,
-      priceChange24h,
-      volume24h,
+      price: snapshot?.price ?? undefined,
+      priceChange24h: snapshot?.change24hPct ?? undefined,
+      volume24h: snapshot?.volume24h ?? undefined,
+      market,
+      signals,
     };
   }
 
@@ -160,33 +148,37 @@ function enrichWatchlistItem(
     createdAt: item.createdAt,
     symbol: 'UNKNOWN',
     name: 'Unknown Item',
+    signals,
   };
 }
 
 /**
  * Enrich a single watchlist with market data
  */
-export function enrichWatchlist(watchlist: Watchlist): WatchlistEnriched {
+export async function enrichWatchlist(watchlist: Watchlist): Promise<WatchlistEnriched> {
+  const provider: MarketDataProvider = getMarketDataProvider();
+  const queries = buildMarketQueries(watchlist.items);
+  const snapshots = await provider.getSnapshots(queries);
+  const snapshotMap = mapSnapshotsToItems(watchlist.items, snapshots);
+
   return {
     id: watchlist.id,
+    ownerUserId: watchlist.ownerUserId,
     name: watchlist.name,
     description: watchlist.description,
     createdAt: watchlist.createdAt,
     updatedAt: watchlist.updatedAt,
-    items: watchlist.items.map(enrichWatchlistItem),
+    items: watchlist.items.map((item) =>
+      enrichWatchlistItem(item, snapshotMap),
+    ),
   };
 }
 
 /**
  * Enrich multiple watchlists with market data
  */
-export function enrichWatchlists(watchlists: Watchlist[]): WatchlistEnriched[] {
-  return watchlists.map(enrichWatchlist);
-}
-
-/**
- * Clear the price cache (useful for testing)
- */
-export function clearPriceCache(): void {
-  priceCache.clear();
+export async function enrichWatchlists(
+  watchlists: Watchlist[],
+): Promise<WatchlistEnriched[]> {
+  return Promise.all(watchlists.map(enrichWatchlist));
 }

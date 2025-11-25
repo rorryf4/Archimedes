@@ -1,8 +1,22 @@
-import type { Watchlist } from './types';
+import type { Watchlist, WatchlistUserContext } from './types';
+
+// Default test user ID for development and testing
+export const DEFAULT_TEST_USER_ID = 'user-test-default';
+
+/**
+ * Get the current user context for watchlist operations.
+ * In a real app, this would extract the user ID from the session/JWT.
+ * For now, we use a hardcoded test user ID.
+ */
+export function getCurrentUserContext(): WatchlistUserContext {
+  // TODO: Replace with real authentication when available
+  return { userId: DEFAULT_TEST_USER_ID };
+}
 
 export const WATCHLISTS: Watchlist[] = [
   {
     id: 'wl-favorites',
+    ownerUserId: DEFAULT_TEST_USER_ID,
     name: 'My Favorites',
     description: 'My favorite cryptocurrencies and markets',
     items: [
@@ -27,6 +41,7 @@ export const WATCHLISTS: Watchlist[] = [
   },
   {
     id: 'wl-trending',
+    ownerUserId: DEFAULT_TEST_USER_ID,
     name: 'Trending Markets',
     description: 'Currently trending cryptocurrency markets',
     items: [

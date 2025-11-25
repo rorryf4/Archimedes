@@ -7,3 +7,5 @@ export {
   getMarketById,
   getLatestPriceFeedForMarket,
 } from './service';
+export type { MarketSnapshot, MarketQuery, MarketDataProvider } from './marketData';
+export { getMarketDataProvider } from './marketData';

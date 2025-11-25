@@ -1,7 +1,7 @@
 // app/web/modules/watchlists/repository.ts
 // Repository switcher: delegates to memory or Supabase implementation based on env flag
 
-import type { Watchlist } from './types';
+import type { Watchlist, WatchlistUserContext } from './types';
 import type {
   CreateWatchlistInput,
   UpdateWatchlistInput,
@@ -16,82 +16,87 @@ const USE_SUPABASE_PERSISTENCE =
 // Select the appropriate repository implementation
 const repository = USE_SUPABASE_PERSISTENCE ? supabaseRepo : memoryRepo;
 
-if (USE_SUPABASE_PERSISTENCE) {
-  console.log('[Repository] Using Supabase persistence');
-} else {
-  console.log('[Repository] Using in-memory persistence');
-}
-
 /**
- * List all watchlists (no auth for now)
+ * List all watchlists for a specific user
  */
-export async function listWatchlists(): Promise<Watchlist[]> {
-  return repository.listWatchlists();
+export async function listWatchlists(
+  context: WatchlistUserContext
+): Promise<Watchlist[]> {
+  return repository.listWatchlists(context);
 }
 
 /**
- * Get a single watchlist by ID
+ * Get a single watchlist by ID (user-scoped)
  */
 export async function getWatchlistById(
+  context: WatchlistUserContext,
   id: string
 ): Promise<Watchlist | null> {
-  return repository.getWatchlistById(id);
+  return repository.getWatchlistById(context, id);
 }
 
 /**
- * Create a new watchlist
+ * Create a new watchlist for the current user
  */
 export async function createWatchlist(
+  context: WatchlistUserContext,
   input: CreateWatchlistInput
 ): Promise<Watchlist> {
-  return repository.createWatchlist(input);
+  return repository.createWatchlist(context, input);
 }
 
 /**
- * Update watchlist metadata (name, description)
+ * Update watchlist metadata (name, description) - user-scoped
  */
 export async function updateWatchlist(
+  context: WatchlistUserContext,
   id: string,
   input: UpdateWatchlistInput
 ): Promise<Watchlist | null> {
-  return repository.updateWatchlist(id, input);
+  return repository.updateWatchlist(context, id, input);
 }
 
 /**
- * Add a token to watchlist
+ * Add a token to watchlist (user-scoped)
  */
 export async function addTokenToWatchlist(
+  context: WatchlistUserContext,
   id: string,
   tokenId: string
 ): Promise<Watchlist | null> {
-  return repository.addTokenToWatchlist(id, tokenId);
+  return repository.addTokenToWatchlist(context, id, tokenId);
 }
 
 /**
- * Add a market to watchlist
+ * Add a market to watchlist (user-scoped)
  */
 export async function addMarketToWatchlist(
+  context: WatchlistUserContext,
   id: string,
   marketId: string
 ): Promise<Watchlist | null> {
-  return repository.addMarketToWatchlist(id, marketId);
+  return repository.addMarketToWatchlist(context, id, marketId);
 }
 
 /**
- * Remove an item from watchlist
+ * Remove an item from watchlist (user-scoped)
  */
 export async function removeItemFromWatchlist(
+  context: WatchlistUserContext,
   id: string,
   itemId: string
 ): Promise<Watchlist | null> {
-  return repository.removeItemFromWatchlist(id, itemId);
+  return repository.removeItemFromWatchlist(context, id, itemId);
 }
 
 /**
- * Delete a watchlist
+ * Delete a watchlist (user-scoped)
  */
-export async function deleteWatchlist(id: string): Promise<void> {
-  return repository.deleteWatchlist(id);
+export async function deleteWatchlist(
+  context: WatchlistUserContext,
+  id: string
+): Promise<void> {
+  return repository.deleteWatchlist(context, id);
 }
 
 /**
